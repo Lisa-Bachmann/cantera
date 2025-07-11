@@ -591,6 +591,13 @@ cdef class FlowBase(Domain1D):
                 data[j] = self.flow.radiativeHeatLoss(j)
             return data
 
+    property custom_enabled:
+        """ Determines whether or not to include radiative heat transfer """
+        def __get__(self):
+            return self.flow.customEnabled()
+        def __set__(self, do_custom):
+            self.flow.enableCustom(<cbool>do_custom)
+
     def set_free_flow(self):
         """
         Set flow configuration for freely-propagating flames, using an internal

@@ -239,9 +239,22 @@ public:
         m_do_radiation = doRadiation;
     }
 
+    void enableCustom(bool doCustom) {
+        m_do_custom = doCustom;
+    }
+
+    bool customEnabled() const {
+        return m_do_custom;
+    }
+
     //! Returns `true` if the radiation term in the energy equation is enabled
     bool radiationEnabled() const {
         return m_do_radiation;
+    }
+
+    //! Return custom heat loss at grid point j
+    double customHeatLoss(size_t j) const {
+        return m_qdotCustom[j];
     }
 
     //! Return radiative heat loss at grid point j
@@ -478,6 +491,7 @@ protected:
      */
     void computeRadiation(double* x, size_t jmin, size_t jmax);
 
+    void computeCustomHeatFlux(double* x, size_t jmin, size_t jmax);
     //! @}
 
     //! @name Governing Equations
@@ -930,6 +944,8 @@ protected:
     //! @see enableRadiation, radiationEnabled, computeRadiation
     bool m_do_radiation = false;
 
+    bool m_do_custom = false;
+
     //! Determines whether the viscosity term in the momentum equation is calculated
     //! @see setViscosityFlag, setFreeFlow, setAxisymmetricFlow, setUnstrainedFlow,
     //!      updateTransport, shear
@@ -948,6 +964,9 @@ protected:
     //! Flag for activating two-point flame control
     bool m_twoPointControl = false;
     //! @}
+
+    //! custom heat loss vector
+    vector<double> m_qdotCustom;
 
     //! radiative heat loss vector
     vector<double> m_qdotRadiation;

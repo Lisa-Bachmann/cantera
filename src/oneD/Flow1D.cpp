@@ -55,7 +55,7 @@ Flow1D::Flow1D(ThermoPhase* ph, size_t nsp, size_t points) :
     m_dhk_dz.resize(m_nsp, m_points - 1, 0.0);
     m_ybar.resize(m_nsp);
     m_qdotRadiation.resize(m_points, 0.0);
-
+    m_qdotCustom.resize(m_points, 0.0);
     //-------------- default solution bounds --------------------
     setBounds(c_offset_U, -1e20, 1e20); // no bounds on u
     setBounds(c_offset_V, -1e20, 1e20); // no bounds on V
@@ -176,6 +176,7 @@ void Flow1D::resize(size_t ncomponents, size_t points)
     m_dhk_dz.resize(m_nsp, m_points - 1, 0.0);
     m_do_energy.resize(m_points,false);
     m_qdotRadiation.resize(m_points, 0.0);
+    m_qdotCustom.resize(m_points, 0.0);
     m_fixedtemp.resize(m_points);
 
     m_dz.resize(m_points-1);
@@ -335,6 +336,10 @@ void Flow1D::eval(size_t jGlobal, double* xGlobal, double* rsdGlobal,
 
     if (m_do_radiation) { // Calculation of qdotRadiation
         computeRadiation(x, jmin, jmax);
+    }
+
+    if (m_do_custom) {
+        computeCustomHeatFlux(x, jmin, jmax); //start at 50%
     }
 
     evalContinuity(x, rsd, diag, rdt, jmin, jmax);
@@ -511,6 +516,84 @@ void Flow1D::computeRadiation(double* x, size_t jmin, size_t jmax)
     }
 }
 
+void Flow1D::computeCustomHeatFlux(double* x, size_t jmin, size_t jmax)
+{
+    double heat_b_temp = 1100;
+    double Y_H_threshold = 0.02; // Threshold for burnt region identification
+
+    double z_start = 0.5; // Start of heat flux region [m]
+    double z_end = 0.9; //End of heat flux region [m]
+    // +++ TODO: Implement this also not fixed
+
+
+    //std::ofstream fout("/home/lisa/Projects/SU2_Project/Cantera/weights_output.txt",std::ios::app);
+
+    size_t kH = m_thermo->speciesIndex("H");
+
+    if (kH == npos) {
+        throw CanteraError("computeCustomHeatFlux", "Hydrogen species not found");
+    }
+
+    for (size_t j = jmin; j< jmax; j++){
+        //Access hydrogen mass fraction
+        double Y_H = Y(x, kH, j);
+        double temperature = T(x,j);
+
+        m_qdotCustom[j] = 0.0; //Standard: no heat flux
+
+        //fout << "T " << temperature << "z" << z(j) << std::endl;
+        // if not burnt or too cold --> continue
+        if (Y_H >= Y_H_threshold || temperature < heat_b_temp) continue;
+
+        double z_pos = z(j); //Physical position
+        double factor = 0.0;
+
+        // Check position
+
+        if (z_pos >= z_start && z_pos <= z_end){
+            double xi = (z_pos - z_start) / (z_end - z_start);
+            factor = 4.0 * xi * (1.0 - xi); //smooth peak function
+            //factor = 0;
+        }
+
+        // Heat sink (cooling) in burnt region
+        double dT = temperature - heat_b_temp;
+        //+++ Check if Temperature  is physikal (e.g. larger )
+        double cp = std::max(0.0, m_cp[j]); // check if cp is positive
+        double rho = std::max(0.0, m_rho[j]); // check if rho is positive
+
+        m_qdotCustom[j] = factor * rho * cp * dT; // / m_dt[j];
+      //  fout << "z "<< z(j) << "m_qdotCustom"<< m_qdotCustom[j] << std::endl;
+    }
+    //std::exit(1);
+    //fout << jmin << "-" << jmax << std::endl;
+    //size_t N = jmax;
+    // for (size_t i = 0; i < 100; ++i) {
+    //     fout << "x[" << i << "] = " << x[i] << std::endl;
+    // }
+
+    // size_t heat_bound[2] = {10, 15};
+    // const double pi = M_PI;
+
+    // //std::exit(1);
+    // for (size_t j = jmin; j < jmax; j++) {
+    //     double dT = T(x, j) - heat_b_temp;
+    //     double fact1 = (1.0 / pi) * std::atan(1.0e6 * (j - heat_bound[0])) + 0.5;
+    //     double fact2 = (1.0 / pi) * std::atan(1.0e6 * (j - heat_bound[1])) + 0.5;
+
+    //     double factor = 0;
+    //     if (j > heat_bound[0] && j < heat_bound[1]) {
+    //         factor = fact1 - fact2;
+    //     }
+
+    //     m_qdotCustom[j] = m_rho[j] * m_cp[j] * dT * factor;
+
+    //     fout << "j " << j << std::endl;
+    //     fout << "mdot_Custom " << m_qdotCustom[j] << std::endl;
+    // }
+
+}
+
 void Flow1D::evalContinuity(double* x, double* rsd, int* diag,
                             double rdt, size_t jmin, size_t jmax)
 {
@@ -675,6 +758,7 @@ void Flow1D::evalEnergy(double* x, double* rsd, int* diag,
                                         - conduction(x, j) - sum;
             rsd[index(c_offset_T, j)] /= (m_rho[j]*m_cp[j]);
             rsd[index(c_offset_T, j)] -= (m_qdotRadiation[j] / (m_rho[j] * m_cp[j]));
+            rsd[index(c_offset_T, j)] -= (m_qdotCustom[j] / (m_rho[j] * m_cp[j]));
             if (!m_twoPointControl || (m_z[j] != m_tLeft && m_z[j] != m_tRight)) {
                 rsd[index(c_offset_T, j)] -= rdt*(T(x, j) - T_prev(j));
                 diag[index(c_offset_T, j)] = 1;
@@ -942,6 +1026,12 @@ shared_ptr<SolutionArray> Flow1D::asArray(const double* soln) const
         arr->setComponent("radiative-heat-loss", value);
     }
 
+    if (m_do_custom) {
+        arr->addExtra("custom-heat-loss", true); // add at end
+        value = m_qdotCustom;
+        arr->setComponent("custom-heat-loss", value);
+    }
+
     return arr;
 }
 
@@ -1005,6 +1095,10 @@ void Flow1D::setMeta(const AnyMap& state)
             m_epsilon_left = state["emissivity-left"].asDouble();
             m_epsilon_right = state["emissivity-right"].asDouble();
         }
+    }
+
+    if (state.hasKey("custom-enabled")) {
+        m_do_custom = state["custom-enabled"].asBool();
     }
 
     if (state.hasKey("refine-criteria")) {

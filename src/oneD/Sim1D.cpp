@@ -197,6 +197,7 @@ AnyMap legacyH5(shared_ptr<SolutionArray> arr, const AnyMap& header={})
     map<string, string> header_pairs = {
         {"transport-model", "transport_model"},
         {"radiation-enabled", "radiation_enabled"},
+        {"custom-enabled", "custom_enabled"},
         {"energy-enabled", "energy_enabled"},
         {"Soret-enabled", "soret_enabled"},
     };

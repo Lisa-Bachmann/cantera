@@ -241,6 +241,17 @@ class FlameBase(Sim1D):
         self.flame.radiation_enabled = enable
 
     @property
+    def custom_enabled(self):
+        """
+        Get/Set whether or not to include radiative heat transfer
+        """
+        return self.flame.custom_enabled
+
+    @custom_enabled.setter
+    def custom_enabled(self, enable):
+        self.flame.custom_enabled = enable
+
+    @property
     def boundary_emissivities(self):
         """ Set/get boundary emissivities. """
         return self.flame.boundary_emissivities
@@ -1505,3 +1516,167 @@ class CounterflowTwinPremixedFlame(FlameBase):
         self.set_profile('velocity', [0.0, 1.0], [uu, 0])
         self.set_profile('spread_rate', [0.0, 1.0], [0.0, a])
         self.set_profile("lambda", [0.0, 1.0], [L, L])
+
+
+class CooledFlame(FlameBase):
+    """A freely-propagating flat flame."""
+    __slots__ = ('inlet', 'flame', 'outlet')
+
+    def __init__(self, gas, grid=None, width=None):
+        """
+        A domain of type `FreeFlow` named 'flame' will be created to represent
+        the flame. The three domains comprising the stack are stored as ``self.inlet``,
+        ``self.flame``, and ``self.outlet``.
+
+        :param grid:
+            A list of points to be used as the initial grid. Not recommended
+            unless solving only on a fixed grid; Use the `width` parameter
+            instead.
+        :param width:
+            Defines a grid on the interval [0, width] with internal points
+            determined automatically by the solver.
+        """
+
+        #: `Inlet1D` at the left of the domain representing premixed reactants
+        self.inlet = Inlet1D(name='reactants', phase=gas)
+
+        #: `Outlet1D` at the right of the domain representing the burned products
+        self.outlet = Outlet1D(name='products', phase=gas)
+
+        if not hasattr(self, 'flame'):
+            # Create flame domain if not already instantiated by a child class
+            #: `FreeFlow` domain representing the flame
+            self.flame = UnstrainedFlow(gas, name='flame')
+
+        if width is not None:
+            if grid is not None:
+                raise ValueError("'grid' and 'width' arguments are mutually exclusive")
+            grid = np.array([0.0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0]) * width
+
+        super().__init__((self.inlet, self.flame, self.outlet), gas, grid)
+
+        # Setting X needs to be deferred until linked to the flow domain
+        self.inlet.T = gas.T
+        self.inlet.X = gas.X
+        self.inlet.Y = gas.Y
+
+    def set_initial_guess(self, data=None, group=None):
+        """
+        Set the initial guess for the solution. By default, the adiabatic flame
+        temperature and equilibrium composition are computed for the burner
+        gas composition. The temperature profile rises linearly in the first
+        20% of the flame to Tad, then is flat. The mass fraction profiles are
+        set similarly. Alternatively, a previously calculated result can be
+        supplied as an initial guess  via 'data' and 'key' inputs (see
+        `FlameBase.set_initial_guess`).
+        """
+        super().set_initial_guess(data=data, group=group)
+        if data:
+            return
+
+        self.gas.TPY = self.inlet.T, self.P, self.inlet.Y
+        Y0 = self.inlet.Y
+        u0 = self.inlet.mdot / self.gas.density
+        T0 = self.inlet.T
+
+        # get adiabatic flame temperature and composition
+        self.gas.equilibrate('HP')
+        Teq = self.gas.T
+        Yeq = self.gas.Y
+        u1 = self.inlet.mdot / self.gas.density
+
+        locs = np.array([0.0, 0.4, 0.6, 1.0])
+        self.set_profile('velocity', locs, [u0, u1, u1])
+        self.set_profile('T', locs, [T0, Teq, Teq])
+        for n in range(self.gas.n_species):
+            self.set_profile(self.gas.species_name(n),
+                             locs, [Y0[n], Yeq[n], Yeq[n]])
+
+    def solve(self, loglevel=1, refine_grid=True, auto=False, stage=1):
+        """
+        Solve the problem.
+
+        :param loglevel:
+            integer flag controlling the amount of diagnostic output. Zero
+            suppresses all output, and 5 produces very verbose output.
+        :param refine_grid:
+            if True, enable grid refinement.
+        :param auto: if True, sequentially execute the different solution stages
+            and attempt to automatically recover from errors. Attempts to first
+            solve on the initial grid with energy enabled. If that does not
+            succeed, a fixed-temperature solution will be tried followed by
+            enabling the energy equation, and then with grid refinement enabled.
+            If non-default tolerances have been specified or multicomponent
+            transport is enabled, an additional solution using these options
+            will be calculated.
+        :param stage: solution stage; only used when transport model is ``ionized-gas``.
+        """
+        if self.flame.transport_model == 'ionized-gas':
+            self.flame.solving_stage = stage
+
+        # Use a callback function to check that the flame has not been blown off
+        # the burner surface. If the user provided a callback, store this so it
+        # can called in addition to our callback, and restored at the end.
+        original_callback = self._steady_callback
+
+        class FlameBlowoff(Exception): pass
+
+        if auto:
+            def check_blowoff(t):
+                T = self.T
+                n = max(3, len(self.T) // 5)
+
+                # Near-zero temperature gradient at burner indicates blowoff
+                if abs(T[n] - T[0]) / (T[-1] - T[0]) < 1e-6:
+                    raise FlameBlowoff()
+
+                if original_callback:
+                    return original_callback(t)
+                else:
+                    return 0.0
+
+            self.set_steady_callback(check_blowoff)
+
+        try:
+            return super().solve(loglevel, refine_grid, auto)
+        except FlameBlowoff:
+            # The eventual solution for a blown off flame is the non-reacting
+            # solution, so just set the state to this now
+            self.set_flat_profile(self.flame, 'T', self.T[0])
+            for k,spec in enumerate(self.gas.species_names):
+                self.set_flat_profile(self.flame, spec, self.inlet.Y[k])
+
+            self.set_steady_callback(original_callback)
+            super().solve(loglevel, False, False)
+            if loglevel > 0:
+                print('Flame has blown off of burner (non-reacting solution)')
+
+        self.set_steady_callback(original_callback)
+
+    def get_flame_speed_reaction_sensitivities(self):
+        r"""
+        Compute the normalized sensitivities of the laminar flame speed
+        :math:`S_u` with respect to the reaction rate constants :math:`k_i`:
+
+        .. math::
+
+            s_i = \frac{k_i}{S_u} \frac{dS_u}{dk_i}
+        """
+
+        def g(sim):
+            return sim.velocity[0]
+
+        Nvars = sum(D.n_components * D.n_points for D in self.domains)
+
+        # Index of u[0] in the global solution vector
+        i_Su = self.inlet.n_components + self.flame.component_index('velocity')
+
+        dgdx = np.zeros(Nvars)
+        dgdx[i_Su] = 1
+
+        Su0 = g(self)
+
+        def perturb(sim, i, dp):
+            sim.gas.set_multiplier(1+dp, i)
+
+        return self.solve_adjoint(perturb, self.gas.n_reactions, dgdx) / Su0
