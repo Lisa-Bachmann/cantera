@@ -595,87 +595,67 @@ namespace Cantera
 
     void Flow1D::computeCustomHeatFlux(double *x, size_t jmin, size_t jmax)
     {
-        std::ofstream fout("/home/lisa/Projects/SU2_Project/Cantera/Qdot.txt", std::ios::app);
+        std::ofstream fout("/home/lisa/Projects/SU2_Project/Cantera/custom_heat_flux.txt", std::ios::out | std::ios::app);
+        fout << std::scientific << std::setprecision(6);
+        fout << "=== computeCustomHeatFlux diagnostics ===\n";
 
-        m_custom_iteration_count++; // only for bug fixing
-        double heat_release_threshold_fraction = 0.10;
+        double qdot_max = m_custom_qdot_max;      // This is the maximum heat flux from the precomputed Freeflame
+        double heat_b_temp = m_burnt_temperature; // should be set by the pre-solved freeflame
 
-        // Count of species and reactions
-        size_t nSpecies = m_thermo->nSpecies();
-        size_t nReactions = m_kin->nReactions();
+        double nSpecies = m_thermo->nSpecies();
 
-        // Vectors for partial mole enthalpies and reaction rates of species
-        std::vector<double> hks(nSpecies);
-        std::vector<double> rr(nReactions);
+        double heat_release_threshold_fraction = 0.10; // 10%, maybe later also not a fixed value
 
-        double max_qdot = 0.0;
+        double qdot_max_threshold = qdot_max * heat_release_threshold_fraction;
 
-        // Loop over grid points
-        for (size_t j = jmin; j < jmax; ++j)
+        double z_start = m_z[0];          // start of flame domain
+        double z_end = m_z[m_points - 1]; // end of flame domain
+
+        if (m_qdotCustom.size() != m_points)
         {
-            updateThermo(x, j, j + 1);
+            m_qdotCustom.resize(m_points, 0.0);
+        }
 
-            // get partial mole enthalpies of all species
-            m_thermo->getPartialMolarEnthalpies(hks.data()); //[J/kmol]
-
-            // get net reaction rates
-            m_kin->getNetRatesOfProgress(rr.data()); //[kmol/m^3/s]
-
-            // heat release rate at position j
-            double qdot = 0.0;
-
-            // sum over all reactions
-            for (size_t r = 0; r < nReactions; r++)
+        for (size_t j = jmin; j < jmax; j++)
+        {
+            // q˙​=−k∑​hk​⋅ω˙k​
+            double local_qdot = 0.0;
+            for (size_t k = 0; k < nSpecies; k++)
             {
-                const auto &rxn = *m_kin->reaction(r);
-                double dHr = 0.0;
-
-                // ΔH = Σ (ν_k * h_k) of products - Σ (ν_k * h_k) of reactants
-                for (const auto &[species, nu_k] : rxn.products)
-                {
-                    size_t sp_index = m_thermo->speciesIndex(species);
-                    if (sp_index != npos)
-                    {
-                        dHr += nu_k * hks[sp_index];
-                    }
-                }
-                for (const auto &[species, nu_k] : rxn.reactants)
-                {
-                    size_t sp_index = m_thermo->speciesIndex(species);
-                    if (sp_index != npos)
-                    {
-                        dHr -= nu_k * hks[sp_index];
-                    }
-                }
-
-                // Caution of sign: Exotherme: dHr < 0 but qdot > 0
-                double heat_contrib = -rr[r] * dHr;
-                qdot += heat_contrib;
+                local_qdot -= m_hk(k, j) * m_wdot(k, j); // heat release (W/m³)
             }
 
-            // refresh maximum value
-            max_qdot = std::max(max_qdot, qdot);
+            if (local_qdot < qdot_max_threshold)
+            {
+                // smooth scaling factor along the flame
+                double xi = (m_z[j] - z_start) / (z_end - z_start);
+                double factor = 4.0 * xi * (1.0 - xi);
+
+                // ensure cp and rho are physically valid
+                double cp = std::max(1e-12, m_cp[j]); // avoid zero
+                double rho = std::max(1e-12, m_rho[j]);
+
+                double T = x[componentIndex("T") + j];
+                double dT = T - heat_b_temp;
+
+                // apply custom heat flux
+                m_qdotCustom[j] = factor * rho * cp * dT;
+                // diagnostic output
+                fout << "j=" << j
+                     << " z=" << m_z[j]
+                     << " T=" << T
+                     << " local_qdot=" << local_qdot
+                     << " dT=" << dT
+                     << " factor=" << factor
+                     << " qdotCustom=" << m_qdotCustom[j];
+            }
+            else
+            {
+                m_qdotCustom[j] = 0.0;
+            }
         }
-        // output
-        fout << m_custom_iteration_count << "\t" << max_qdot << std::endl;
-
-        // Threshold
-        double threshold_qdot = max_qdot * heat_release_threshold_fraction;
-
-        // This defines the z_min, now calculation of Custom Heat Flux and application.
-        // This will only be run, if max_qdot is done
-
-        // double xi = (z_pos - z_start) / (z_end - z_start);
-        // factor = 4.0 * xi * (1.0 - xi); //smooth peak function
-        // //factor = 0;
-
-        // // Heat sink (cooling) in burnt region
-        // double dT = temperature - heat_b_temp;
-        // //+++ Check if Temperature  is physikal (e.g. larger )
-        // double cp = std::max(0.0, m_cp[j]); // check if cp is positive
-        // double rho = std::max(0.0, m_rho[j]); // check if rho is positive
-
-        // m_qdotCustom[j] = factor * rho * cp * dT; // / m_dt[j];
+        fout << "=== end computeCustomHeatFlux ===\n\n";
+        fout.close();
     }
 
     void Flow1D::evalContinuity(double *x, double *rsd, int *diag,

@@ -1592,7 +1592,7 @@ class CooledFlame(FlameBase):
             self.set_profile(self.gas.species_name(n),
                              locs, [Y0[n], Yeq[n], Yeq[n]])
 
-    def solve(self, loglevel=1, refine_grid=True, auto=False, stage=1):
+    def solve(self, loglevel=1, refine_grid=True, auto=False, stage=1, custom_enabled=True):
         """
         Solve the problem.
 
@@ -1636,6 +1636,26 @@ class CooledFlame(FlameBase):
                     return 0.0
 
             self.set_steady_callback(check_blowoff)
+
+        # Solve Free Flame if custom_enabled is true
+        if custom_enabled:
+            free_flame = FreeFlame(self.gas, grid=self.grid)
+            free_flame.solve(loglevel=loglevel, refine_grid=refine_grid, auto=auto)
+            self.free_flame_solution = free_flame
+
+            # extract maximum heat release
+            if hasattr(free_flame.flame, 'q'):
+                self.qdot_max = free_flame.flame.q.max()
+                self.burnt_temperature = free_flame.T[-1]; # last grid point as burnt temperature
+            else:
+                raise RuntimeError("Free flame does not have heat flux data available.")
+
+            # initialize Flame from free flame
+            self.set_initial_guess(data=free_flame.get_profiles())
+
+            # --- Pass qdot_max to C++ Flow1D object ---
+            self.flame.setCustomQdotMax(self.qdot_max)
+            self.flame.setBurntTemperature(self.burnt_temperature)
 
         try:
             return super().solve(loglevel, refine_grid, auto)

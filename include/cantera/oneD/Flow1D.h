@@ -569,6 +569,10 @@ namespace Cantera
          * @param[in] jmin  The index for the starting point in the local domain grid.
          * @param[in] jmax  The index for the ending point in the local domain grid.
          */
+
+        void setCustomQdotMax(double qdot_max) { m_custom_qdot_max = qdot_max; }
+        void setBurntTemperature(double T_burnt) { m_burnt_temperature = T_burnt; }
+
         virtual void evalContinuity(double *x, double *rsd, int *diag,
                                     double rdt, size_t jmin, size_t jmax);
 
@@ -1004,9 +1008,11 @@ namespace Cantera
         //! Determines whether custom heat flux is calculated
         bool m_do_custom = false;
         int m_custom_iteration_count = 0;
-        double m_custom_max_qdot = 0.0;
-        double m_custom_max_qdot_stable;
+        double m_custom_qdot_max = 0.0; // max heat flux from free flame
+        double m_custom_qdot_max_stable;
 
+        double m_burnt_temperature = 0.0; // reference temperature for custom flux
+        size_t m_nSpecies;                // number of species in the domain
         //! Determines whether the viscosity term in the momentum equation is calculated
         //! @see setViscosityFlag, setFreeFlow, setAxisymmetricFlow, setUnstrainedFlow,
         //!      updateTransport, shear
