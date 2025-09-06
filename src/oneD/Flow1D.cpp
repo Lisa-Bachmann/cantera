@@ -376,10 +376,9 @@ namespace Cantera
         { // Calculation of qdotRadiation
             computeRadiation(x, jmin, jmax);
         }
-
         if (m_do_custom)
         {
-            computeCustomHeatFlux(x, jmin, jmax); // start at 50%
+            computeCustomHeatFlux(x, jmin, jmax);
         }
 
         evalContinuity(x, rsd, diag, rdt, jmin, jmax);
@@ -595,6 +594,7 @@ namespace Cantera
 
     void Flow1D::computeCustomHeatFlux(double *x, size_t jmin, size_t jmax)
     {
+        std::exit(1);
         std::ofstream fout("/home/lisa/Projects/SU2_Project/Cantera/custom_heat_flux.txt", std::ios::out | std::ios::app);
         fout << std::scientific << std::setprecision(6);
         fout << "=== computeCustomHeatFlux diagnostics ===\n";
@@ -1277,9 +1277,9 @@ namespace Cantera
             }
         }
 
-        if (state.hasKey("custom-enabled"))
+        if (state.hasKey("custom_enabled"))
         {
-            m_do_custom = state["custom-enabled"].asBool();
+            m_do_custom = state["custom_enabled"].asBool();
         }
 
         if (state.hasKey("refine-criteria"))

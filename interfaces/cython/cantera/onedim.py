@@ -1592,7 +1592,7 @@ class CooledFlame(FlameBase):
             self.set_profile(self.gas.species_name(n),
                              locs, [Y0[n], Yeq[n], Yeq[n]])
 
-    def solve(self, loglevel=1, refine_grid=True, auto=False, stage=1, custom_enabled=True):
+    def solve(self, loglevel=1, refine_grid=True, auto=False, stage=1):
         """
         Solve the problem.
 
@@ -1638,20 +1638,32 @@ class CooledFlame(FlameBase):
             self.set_steady_callback(check_blowoff)
 
         # Solve Free Flame if custom_enabled is true
-        if custom_enabled:
-            free_flame = FreeFlame(self.gas, grid=self.grid)
-            free_flame.solve(loglevel=loglevel, refine_grid=refine_grid, auto=auto)
-            self.free_flame_solution = free_flame
-
+        if self.custom_enabled:
+            free_flame_for_guess = FreeFlame(self.gas, grid=self.grid)
+            free_flame_for_guess.energy_enabled = True
+            free_flame_for_guess.solve(loglevel=loglevel, refine_grid=refine_grid, auto=auto)
+            # self.free_flame_solution = free_flame
+            # --- ADD THESE PRINT STATEMENTS ---
+            print("Solve of temporary FreeFlame completed.")
+            # print(f"Type of 'free_flame_for_guess': {type(free_flame_for_guess)}")
+            # print(f"Attributes of 'free_flame_for_guess': {dir(free_flame_for_guess)}")
+            # print(f"Type of 'free_flame_for_guess.flame': {type(free_flame_for_guess.flame)}")
+            # print(f"Attributes of 'free_flame_for_guess.flame': {dir(free_flame_for_guess.flame)}")
+            print(free_flame_for_guess.T[-1])
+            print(hasattr(free_flame_for_guess, 'heat_release_rate'))
+            #print(free_flame_for_guess.__getattribute__.)
+            # ---
             # extract maximum heat release
-            if hasattr(free_flame.flame, 'q'):
-                self.qdot_max = free_flame.flame.q.max()
-                self.burnt_temperature = free_flame.T[-1]; # last grid point as burnt temperature
+            if hasattr(free_flame_for_guess, 'heat_release_rate'):
+                self.qdot_max = max(free_flame_for_guess.heat_release_rate)
+                print(self.qdot_max)
+                self.burnt_temperature = free_flame_for_guess.T[-1] # last grid point as burnt temperature
+                print(self.burnt_temperature)
             else:
                 raise RuntimeError("Free flame does not have heat flux data available.")
 
             # initialize Flame from free flame
-            self.set_initial_guess(data=free_flame.get_profiles())
+            self.set_initial_guess(data=free_flame_for_guess.get_profiles())
 
             # --- Pass qdot_max to C++ Flow1D object ---
             self.flame.setCustomQdotMax(self.qdot_max)
