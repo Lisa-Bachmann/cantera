@@ -594,13 +594,12 @@ namespace Cantera
 
     void Flow1D::computeCustomHeatFlux(double *x, size_t jmin, size_t jmax)
     {
-        std::exit(1);
         std::ofstream fout("/home/lisa/Projects/SU2_Project/Cantera/custom_heat_flux.txt", std::ios::out | std::ios::app);
         fout << std::scientific << std::setprecision(6);
         fout << "=== computeCustomHeatFlux diagnostics ===\n";
 
-        double qdot_max = m_custom_qdot_max;      // This is the maximum heat flux from the precomputed Freeflame
-        double heat_b_temp = m_burnt_temperature; // should be set by the pre-solved freeflame
+        double qdot_max = m_custom_qdot_max;             // This is the maximum heat flux from the precomputed Freeflame
+        double heat_b_temp = m_custom_burnt_temperature; // should be set by the pre-solved freeflame
 
         double nSpecies = m_thermo->nSpecies();
 
@@ -656,6 +655,12 @@ namespace Cantera
         }
         fout << "=== end computeCustomHeatFlux ===\n\n";
         fout.close();
+    }
+
+    void Flow1D::setCustomHeatFluxProperties(double qdot_max, double burnt_temp)
+    {
+        m_custom_qdot_max = qdot_max;
+        m_custom_burnt_temperature = burnt_temp;
     }
 
     void Flow1D::evalContinuity(double *x, double *rsd, int *diag,

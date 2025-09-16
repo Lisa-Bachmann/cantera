@@ -1520,7 +1520,7 @@ class CounterflowTwinPremixedFlame(FlameBase):
 
 class CooledFlame(FlameBase):
     """A freely-propagating flat flame."""
-    __slots__ = ('inlet', 'flame', 'outlet')
+    __slots__ = ('inlet', 'flame', 'outlet', 'qdot_max', 'burnt_temperature')
 
     def __init__(self, gas, grid=None, width=None):
         """
@@ -1553,12 +1553,19 @@ class CooledFlame(FlameBase):
                 raise ValueError("'grid' and 'width' arguments are mutually exclusive")
             grid = np.array([0.0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0]) * width
 
+        self.qdot_max = 0.0
+        self.burnt_temperature = 0.0
+
         super().__init__((self.inlet, self.flame, self.outlet), gas, grid)
 
         # Setting X needs to be deferred until linked to the flow domain
         self.inlet.T = gas.T
         self.inlet.X = gas.X
         self.inlet.Y = gas.Y
+
+        self.gas = gas
+        self.flame.P = gas.P
+
 
     def set_initial_guess(self, data=None, group=None):
         """
@@ -1663,13 +1670,16 @@ class CooledFlame(FlameBase):
                 raise RuntimeError("Free flame does not have heat flux data available.")
 
             # initialize Flame from free flame
-            self.set_initial_guess(data=free_flame_for_guess.get_profiles())
+            #self.set_initial_guess(data=free_flame_for_guess.get_profiles())
 
             # --- Pass qdot_max to C++ Flow1D object ---
-            self.flame.setCustomQdotMax(self.qdot_max)
-            self.flame.setBurntTemperature(self.burnt_temperature)
+            print(0)
+
+            self.flame.setCustomHeatFluxProperties(self.qdot_max, self.burnt_temperature)
+            print(1)
 
         try:
+            print(3)
             return super().solve(loglevel, refine_grid, auto)
         except FlameBlowoff:
             # The eventual solution for a blown off flame is the non-reacting
@@ -1712,3 +1722,8 @@ class CooledFlame(FlameBase):
             sim.gas.set_multiplier(1+dp, i)
 
         return self.solve_adjoint(perturb, self.gas.n_reactions, dgdx) / Su0
+    # def setCustomQdotMax(self, value):
+    #     self.qdot_max = value
+
+    # def setBurntTemperature(self, value):
+    #     self.burnt_temperature = value
